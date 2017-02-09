@@ -16,6 +16,12 @@ focused_rec_delta = 0.2
 
 use_Focus = True
 
+author_process = "PROCESS_ONE"
+process_two_name = "PROCESS_TWO"
+SEND_POINTS_CODE = "sending_face_points"
+RECEIVED_POINTS_CODE = "received_points"
+LAST_MESSAGE = "LAST_MESSAGE"
+
 def start_camera():
     cap = cv2.VideoCapture(1)
     return cap
@@ -142,6 +148,9 @@ def process_image_get_points(cam, focused_recs, focused_mod):
 
     to_console += ("; frame fps is {}".format(int(1/(time.time() - start_time)))),
     meta = {
+        'author': author_process,
+        'receiver': process_two_name,
+        'action': SEND_POINTS_CODE,
         'face_found':len(points)==1,
         'points':points,
         'width':width,
@@ -185,14 +194,39 @@ def wait_for_new_message(initial_message, mapfile, semaphore):
     while message_i_just_read == initial_message:
         semaphore.acquire()
         message_i_just_read = utils.read_from_memory(mapfile)
-        # if not message_i_just_read == initial_message:
-        #     utils.write_to_memory(mapfile, utils.JOB_DONE)
         semaphore.release()
-
         time.sleep(0.001)
-    return message_i_just_read   
+    return json.loads(message_i_just_read)   
 
 
+def wait_for_new_message2(mapfile, semaphore):
+    new_message_found = False
+    while not new_message_found:
+        semaphore.acquire()
+        message_i_just_read = utils.read_from_memory(mapfile)
+        json_i_just_read = json_to_obj(message_i_just_read)
+        if json_i_just_read['author'] == process_two_name and json_i_just_read['receiver'] == author_process:
+            # message_to_send = {
+            #     'author': author_process,
+            #     'receiver': process_one_name,
+            #     'action': reply_code
+            # }
+            # if last_message:
+            #     message_to_send['action'] = LAST_MESSAGE
+            # utils.write_to_memory(mapfile, message_to_send)
+            new_message_found = True
+        semaphore.release()
+        time.sleep(0.001)
+    return json_i_just_read
+
+def json_to_obj(str):
+    try:
+        meta = json.loads(str)
+    except:
+        print("something wrong with json, exiting")
+        print str
+        exit()
+    return meta
 
 
 if __name__ == '__main__':
@@ -202,7 +236,15 @@ if __name__ == '__main__':
         mapfile = mmap.mmap(shared_memory.fd, shared_memory.size)
         shared_memory.close_fd()
 
-        starting_message = utils.FIRST_HANDSHAKE
+        starting_message = {
+            'author': author_process,
+            'receiver': process_two_name,
+            'action': utils.FIRST_HANDSHAKE
+        }
+        starting_message = json.dumps(starting_message)
+
+
+        # starting_message = utils.FIRST_HANDSHAKE
         utils.write_to_memory(mapfile, starting_message)
         message_i_just_read = starting_message
 
@@ -216,28 +258,29 @@ if __name__ == '__main__':
             waiting_time+=1
             semaphore.acquire()
             message_i_just_read = utils.read_from_memory(mapfile)
-
+        semaphore.release()
 
         print("")
         print("I feel second process is ready, let's roll")
         time.sleep(1)
 
         cam = start_camera()
-        meta, focused_recs, focused_mod, to_console = process_image_get_points(cam,[], False)
-        meta_json = json.dumps(meta)
-        utils.write_to_memory(mapfile, meta_json)
+        # meta, focused_recs, focused_mod, to_console = process_image_get_points(cam,[], False)
+        # meta_json = json.dumps(meta)
+        # utils.write_to_memory(mapfile, meta_json)
         # utils.write_to_memory(mapfile, utils.THIRD_HANDSHAKE)
-        semaphore.release()
+        
 
         start_time = time.time()
         frame_counter = 0
-        # focused_mod = False
-        # focused_recs = []
+        focused_mod = False
+        focused_recs = []
         # message_i_just_wrote = utils.THIRD_HANDSHAKE
         while True:
             # answer = wait_for_new_message(message_i_just_wrote, mapfile, semaphore)
-            answer = wait_for_new_message(meta_json, mapfile, semaphore)
-            if answer == utils.JOB_DONE:
+            answer = wait_for_new_message2(mapfile, semaphore)
+            # answer = wait_for_new_message(meta_json, mapfile, semaphore)
+            if answer['action'] == LAST_MESSAGE:
                 break
             semaphore.acquire()
             meta, focused_recs, focused_mod, to_console = process_image_get_points(cam, focused_recs, focused_mod)
@@ -248,7 +291,7 @@ if __name__ == '__main__':
 
             sys.stdout.write("\r{0}".format(to_console))
             sys.stdout.flush()
-            message_i_just_wrote = meta_json
+            # message_i_just_wrote = meta_json
 
             frame_counter+=1
             # print("_______________________________")
